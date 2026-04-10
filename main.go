@@ -21,16 +21,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := shodan.NewClient(nil, shodan_api_key)
-	query := "product:Ollama"
-	result, err := client.GetHostsForQuery(context.Background(), &shodan.HostQueryOptions{Query: query})
-	if err != nil {
-		log.Fatalf("Errore durante la ricerca: %v", err)
-	}
-
-	fmt.Printf("Risultati totali trovati: %d\n", result.Total)
-	fmt.Println("--------------------------------------------------")
-
 	// Apri connessione al database SQLite
 	dbConn, err := sql.Open("sqlite3", "hosts.db")
 	if err != nil {
@@ -60,45 +50,57 @@ func main() {
 	// Crea queries
 	queries := db.New(dbConn)
 
-	// Iteriamo sui match trovati
-	for _, host := range result.Matches {
-		fmt.Printf("IP: %s | Porta: %d | Country: %s | City: %s | ASN: %s | ISP: %s\n",
-			host.IP.String(),
-			host.Port,
-			host.Location.Country,
-			host.Location.City,
-			host.ASN,
-			host.ISP,
-		)
-
-		// Inserisci nel database
-		params := db.InsertHostParams{
-			Ip:   host.IP.String(),
-			Port: int64(host.Port),
-			Isp: sql.NullString{
-				String: host.ISP,
-				Valid:  host.ISP != "",
-			},
-			Asn: sql.NullString{
-				String: host.ASN,
-				Valid:  host.ASN != "",
-			},
-			Country: sql.NullString{
-				String: host.Location.Country,
-				Valid:  host.Location.Country != "",
-			},
-			City: sql.NullString{
-				String: host.Location.City,
-				Valid:  host.Location.City != "",
-			},
-			ScannedAt: sql.NullTime{
-				Time:  time.Now(),
-				Valid: true,
-			},
-		}
-		err = queries.InsertHost(context.Background(), params)
+	client := shodan.NewClient(nil, shodan_api_key)
+	query := "product:Ollama"
+	for i := range 100 {
+		fmt.Printf("Pagina %d", i)
+		hostQueryOptions := shodan.HostQueryOptions{Query: query, Page: i}
+		result, err := client.GetHostsForQuery(context.Background(), &hostQueryOptions)
 		if err != nil {
-			log.Printf("Errore nell'inserimento dell'host %s: %v", host.IP.String(), err)
+			log.Fatalf("Errore durante la ricerca: %v", err)
+		}
+		fmt.Printf("Pagina %d - Risultati totali trovati: %d\n", i, result.Total)
+		// Iteriamo sui match trovati
+		for _, host := range result.Matches {
+			fmt.Printf("IP: %s | Porta: %d | Country: %s | City: %s | ASN: %s | ISP: %s\n",
+				host.IP.String(),
+				host.Port,
+				host.Location.Country,
+				host.Location.City,
+				host.ASN,
+				host.ISP,
+			)
+
+			// Inserisci nel database
+			params := db.InsertHostParams{
+				Ip:   host.IP.String(),
+				Port: int64(host.Port),
+				Isp: sql.NullString{
+					String: host.ISP,
+					Valid:  host.ISP != "",
+				},
+				Asn: sql.NullString{
+					String: host.ASN,
+					Valid:  host.ASN != "",
+				},
+				Country: sql.NullString{
+					String: host.Location.Country,
+					Valid:  host.Location.Country != "",
+				},
+				City: sql.NullString{
+					String: host.Location.City,
+					Valid:  host.Location.City != "",
+				},
+				ScannedAt: sql.NullTime{
+					Time:  time.Now(),
+					Valid: true,
+				},
+			}
+			err = queries.InsertHost(context.Background(), params)
+			if err != nil {
+				log.Printf("Errore nell'inserimento dell'host %s: %v", host.IP.String(), err)
+			}
 		}
 	}
+
 }

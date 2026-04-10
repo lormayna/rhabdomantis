@@ -21,3 +21,10 @@ type Host struct {
 	Active    bool           `json:"active"`
 	ScannedAt sql.NullTime   `json:"scanned_at"`
 }
+
+type Model struct {
+	ID        int64     `json:"id"`
+	HostID    int64     `json:"host_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}

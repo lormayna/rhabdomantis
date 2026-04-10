@@ -38,6 +38,21 @@ func (q *Queries) InsertHost(ctx context.Context, arg InsertHostParams) error {
 	return err
 }
 
+const insertModel = `-- name: InsertModel :exec
+INSERT INTO models (host_id, name)
+VALUES (?, ?)
+`
+
+type InsertModelParams struct {
+	HostID int64  `json:"host_id"`
+	Name   string `json:"name"`
+}
+
+func (q *Queries) InsertModel(ctx context.Context, arg InsertModelParams) error {
+	_, err := q.db.ExecContext(ctx, insertModel, arg.HostID, arg.Name)
+	return err
+}
+
 const listHosts = `-- name: ListHosts :many
 
 SELECT id, ip, port, isp, asn, country, city, created_at, active, scanned_at FROM hosts
@@ -64,6 +79,40 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.CreatedAt,
 			&i.Active,
 			&i.ScannedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listModelsByHost = `-- name: ListModelsByHost :many
+SELECT id, host_id, name, created_at FROM models
+WHERE host_id = ?
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListModelsByHost(ctx context.Context, hostID int64) ([]Model, error) {
+	rows, err := q.db.QueryContext(ctx, listModelsByHost, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Model
+	for rows.Next() {
+		var i Model
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.Name,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
