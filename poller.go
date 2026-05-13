@@ -1,11 +1,10 @@
 package main
 
-package main
-
 import (
-    "fmt"
-    "io"
-    "net/http"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
 )
 
 
@@ -17,33 +16,30 @@ type Model struct {
     Name string `json:"name"`
 }
 
-struct Host struct {
-	IP   string
-	Port int
-	Models []String
+type Host struct {
+	IP     string
+	Port   int
+	Models []string
 }
 
-func ScanIP(host Host) {
-	url := fmt.Sprintf("https://%s:%s/api/tags", host.IP, host.Port)
-    resp, err := http.Get(url)
-    if err != nil {
-        fmt.Println("Errore:", err)
-        return
-    }
-    defer resp.Body.Close()
+func ScanIP(host *Host) {
+	url := fmt.Sprintf("http://%s:%d/api/tags", host.IP, host.Port)
 
-    body, err := io.ReadAll(resp.Body)
-    if err != nil {
-        fmt.Println("Errore lettura body:", err)
-        return
-    }
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println("Errore HTTP:", err)
+		return
+	}
+	defer resp.Body.Close()
 
-    var resp Response
-	if err := json.Unmarshal(body, &resp); err != nil {
+	var responseData Response
+	if err := json.NewDecoder(resp.Body).Decode(&responseData); err != nil {
 		fmt.Println("Errore parsing JSON:", err)
 		return
 	}
-	for _, model := range resp.Models {
+
+	for _, model := range responseData.Models {
 		host.Models = append(host.Models, model.Name)
 	}
 }

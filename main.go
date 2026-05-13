@@ -1,20 +1,19 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
-	"time"
 
-	"github.com/lormayna/rhabdomantis/db"
+	"github.com/lormayna/rhabdomantis/cmd"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/ns3777k/go-shodan/v4/shodan"
+	"github.com/urfave/cli/v2"
 )
 
+const workers = 3
+
 func main() {
-	//shodan_api_key := os.Getenv("SHODAN_API_KEY")
 	shodan_api_key := "p5u2hw6AHFlXJLewlxwyZ8q9yygfwUMH"
 	if shodan_api_key == "" {
 		fmt.Println("Error: SHODAN_API_KEY environment variable is not set.")
@@ -24,83 +23,106 @@ func main() {
 	// Apri connessione al database SQLite
 	dbConn, err := sql.Open("sqlite3", "hosts.db")
 	if err != nil {
-		log.Fatalf("Errore nell'apertura del database: %v", err)
+		slog.Error("Errore nell'apertura del database", "error", err)
+		os.Exit(1)
 	}
 	defer dbConn.Close()
 
+	conf := &cmd.Config{
+		ShodanAPIKey: shodan_api_key,
+		DBConn:       dbConn,
+		Workers:      workers,
+	}
+
 	// Crea la tabella se non esiste
 	schema := `
-	CREATE TABLE IF NOT EXISTS hosts (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		ip TEXT NOT NULL UNIQUE,
-		port INTEGER NOT NULL,
-		isp TEXT,
-		asn TEXT,
-		country TEXT,
-		city TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		active BOOLEAN NOT NULL DEFAULT TRUE,
-		scanned_at DATETIME
-	);`
+    CREATE TABLE IF NOT EXISTS hosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT NOT NULL UNIQUE,
+        port INTEGER NOT NULL,
+        isp TEXT,
+        asn TEXT,
+        country TEXT,
+        city TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        scanned_at DATETIME
+    );`
 	_, err = dbConn.Exec(schema)
 	if err != nil {
-		log.Fatalf("Errore nella creazione della tabella: %v", err)
+		slog.Error("Errore nella creazione della tabella", "error", err)
+		os.Exit(1)
 	}
 
-	// Crea queries
-	queries := db.New(dbConn)
+	app := &cli.App{
+		Name:  "rhabdomantis",
+		Usage: "Tool for scanning LLMs",
+		Commands: []*cli.Command{
+			{
+				Name:    "scan",
+				Aliases: []string{"s"},
+				Usage:   "Start a new scan",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "path",
+						Aliases: []string{"p"},
+						Value:   ".",
+						Usage:   "P",
+					},
+				},
+				Action: func(c *cli.Context) error {
+					path := c.String("path")
+					fmt.Printf("🔍 Start scan in: %s...\n", path)
 
-	client := shodan.NewClient(nil, shodan_api_key)
-	query := "product:Ollama"
-	for i := range 100 {
-		fmt.Printf("Pagina %d", i)
-		hostQueryOptions := shodan.HostQueryOptions{Query: query, Page: i}
-		result, err := client.GetHostsForQuery(context.Background(), &hostQueryOptions)
-		if err != nil {
-			log.Fatalf("Errore durante la ricerca: %v", err)
-		}
-		fmt.Printf("Pagina %d - Risultati totali trovati: %d\n", i, result.Total)
-		// Iteriamo sui match trovati
-		for _, host := range result.Matches {
-			fmt.Printf("IP: %s | Porta: %d | Country: %s | City: %s | ASN: %s | ISP: %s\n",
-				host.IP.String(),
-				host.Port,
-				host.Location.Country,
-				host.Location.City,
-				host.ASN,
-				host.ISP,
-			)
+					err := cmd.Check(conf)
+					if err != nil {
+						slog.Error("Errore durante la scansione", "error", err)
+						return err
+					}
+					fmt.Println("✅ Scan completed successfully!")
+					return nil
+				}, // Chiusura corretta della funzione Action
+			}, // Chiusura corretta del comando scan
+			{
+				Name:    "sync",
+				Aliases: []string{"y"},
+				Usage:   "Retrieve data from Shodan and update the database",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "force",
+						Usage: "Forza la sincronizzazione anche se i dati sono aggiornati",
+					},
+				},
+				Action: func(c *cli.Context) error {
+					if c.Bool("force") {
+						fmt.Println("♻️  Sincronizzazione forzata in corso...")
+					} else {
+						fmt.Println("♻️  Sincronizzazione standard in corso...")
+					}
+					return nil
+				},
+			},
+			{
+				Name:    "verify",
+				Aliases: []string{"v"},
+				Usage:   "Verify the presence of LLMs on active hosts",
+				Action: func(c *cli.Context) error {
+					fmt.Printf("🔍 Start verification")
 
-			// Inserisci nel database
-			params := db.InsertHostParams{
-				Ip:   host.IP.String(),
-				Port: int64(host.Port),
-				Isp: sql.NullString{
-					String: host.ISP,
-					Valid:  host.ISP != "",
-				},
-				Asn: sql.NullString{
-					String: host.ASN,
-					Valid:  host.ASN != "",
-				},
-				Country: sql.NullString{
-					String: host.Location.Country,
-					Valid:  host.Location.Country != "",
-				},
-				City: sql.NullString{
-					String: host.Location.City,
-					Valid:  host.Location.City != "",
-				},
-				ScannedAt: sql.NullTime{
-					Time:  time.Now(),
-					Valid: true,
-				},
-			}
-			err = queries.InsertHost(context.Background(), params)
-			if err != nil {
-				log.Printf("Errore nell'inserimento dell'host %s: %v", host.IP.String(), err)
-			}
-		}
+					err := cmd.Verify(conf)
+					if err != nil {
+						slog.Error("Errore durante la verifica", "error", err)
+						return err
+					}
+					fmt.Println("✅ Verification completed successfully!")
+					return nil
+				}, // Chiusura corretta della funzione Action
+			}, // Chiusura corretta del comando scan
+		},
 	}
 
+	if err := app.Run(os.Args); err != nil {
+		slog.Error("Errore durante l'esecuzione dell'app", "error", err)
+		os.Exit(1)
+	}
 }

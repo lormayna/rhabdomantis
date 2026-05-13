@@ -22,9 +22,25 @@ type Host struct {
 	ScannedAt sql.NullTime   `json:"scanned_at"`
 }
 
+type Inference struct {
+	ID               int64          `json:"id"`
+	ModelID          int64          `json:"model_id"`
+	Prompt           string         `json:"prompt"`
+	Response         sql.NullString `json:"response"`
+	TotalDurationMs  sql.NullInt64  `json:"total_duration_ms"`
+	PromptTokens     sql.NullInt64  `json:"prompt_tokens"`
+	CompletionTokens sql.NullInt64  `json:"completion_tokens"`
+	Verdict          sql.NullString `json:"verdict"`
+	CreatedAt        time.Time      `json:"created_at"`
+}
+
 type Model struct {
-	ID        int64     `json:"id"`
-	HostID    int64     `json:"host_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            int64          `json:"id"`
+	HostID        int64          `json:"host_id"`
+	Name          string         `json:"name"`
+	Size          sql.NullInt64  `json:"size"`
+	Family        sql.NullString `json:"family"`
+	ParameterSize sql.NullString `json:"parameter_size"`
+	Digest        sql.NullString `json:"digest"`
+	CreatedAt     time.Time      `json:"created_at"`
 }

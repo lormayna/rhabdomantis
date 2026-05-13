@@ -8,7 +8,82 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
+
+const deleteModelsByHost = `-- name: DeleteModelsByHost :exec
+DELETE FROM models 
+WHERE host_id = (SELECT id FROM hosts WHERE ip = ?)
+`
+
+func (q *Queries) DeleteModelsByHost(ctx context.Context, ip string) error {
+	_, err := q.db.ExecContext(ctx, deleteModelsByHost, ip)
+	return err
+}
+
+const getIPs = `-- name: GetIPs :many
+SELECT ip, port FROM hosts where active = 1
+`
+
+type GetIPsRow struct {
+	Ip   string `json:"ip"`
+	Port int64  `json:"port"`
+}
+
+func (q *Queries) GetIPs(ctx context.Context) ([]GetIPsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getIPs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetIPsRow
+	for rows.Next() {
+		var i GetIPsRow
+		if err := rows.Scan(&i.Ip, &i.Port); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRandomModelByIP = `-- name: GetRandomModelByIP :one
+SELECT 
+    m.id, 
+    m.name, 
+    h.ip, 
+    h.port
+FROM models m
+JOIN hosts h ON m.host_id = h.id
+WHERE h.ip = ?
+ORDER BY RANDOM()
+LIMIT 1
+`
+
+type GetRandomModelByIPRow struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Ip   string `json:"ip"`
+	Port int64  `json:"port"`
+}
+
+func (q *Queries) GetRandomModelByIP(ctx context.Context, ip string) (GetRandomModelByIPRow, error) {
+	row := q.db.QueryRowContext(ctx, getRandomModelByIP, ip)
+	var i GetRandomModelByIPRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Ip,
+		&i.Port,
+	)
+	return i, err
+}
 
 const insertHost = `-- name: InsertHost :exec
 INSERT INTO hosts (ip, port, isp, asn, country, city, scanned_at)
@@ -99,15 +174,22 @@ WHERE host_id = ?
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListModelsByHost(ctx context.Context, hostID int64) ([]Model, error) {
+type ListModelsByHostRow struct {
+	ID        int64     `json:"id"`
+	HostID    int64     `json:"host_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListModelsByHost(ctx context.Context, hostID int64) ([]ListModelsByHostRow, error) {
 	rows, err := q.db.QueryContext(ctx, listModelsByHost, hostID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Model
+	var items []ListModelsByHostRow
 	for rows.Next() {
-		var i Model
+		var i ListModelsByHostRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.HostID,
@@ -125,4 +207,94 @@ func (q *Queries) ListModelsByHost(ctx context.Context, hostID int64) ([]Model, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const saveInference = `-- name: SaveInference :exec
+INSERT INTO inferences (
+    model_id, 
+    prompt, 
+    response, 
+    total_duration_ms, 
+    prompt_tokens, 
+    completion_tokens,
+    verdict
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?
+)
+`
+
+type SaveInferenceParams struct {
+	ModelID          int64          `json:"model_id"`
+	Prompt           string         `json:"prompt"`
+	Response         sql.NullString `json:"response"`
+	TotalDurationMs  sql.NullInt64  `json:"total_duration_ms"`
+	PromptTokens     sql.NullInt64  `json:"prompt_tokens"`
+	CompletionTokens sql.NullInt64  `json:"completion_tokens"`
+	Verdict          sql.NullString `json:"verdict"`
+}
+
+func (q *Queries) SaveInference(ctx context.Context, arg SaveInferenceParams) error {
+	_, err := q.db.ExecContext(ctx, saveInference,
+		arg.ModelID,
+		arg.Prompt,
+		arg.Response,
+		arg.TotalDurationMs,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.Verdict,
+	)
+	return err
+}
+
+const saveModel = `-- name: SaveModel :exec
+INSERT INTO models (
+    host_id, 
+    name, 
+    size, 
+    family, 
+    parameter_size, 
+    digest
+) VALUES (
+    (SELECT id FROM hosts WHERE ip = ? LIMIT 1), 
+    ?, ?, ?, ?, ?
+)
+`
+
+type SaveModelParams struct {
+	Ip            string         `json:"ip"`
+	Name          string         `json:"name"`
+	Size          sql.NullInt64  `json:"size"`
+	Family        sql.NullString `json:"family"`
+	ParameterSize sql.NullString `json:"parameter_size"`
+	Digest        sql.NullString `json:"digest"`
+}
+
+func (q *Queries) SaveModel(ctx context.Context, arg SaveModelParams) error {
+	_, err := q.db.ExecContext(ctx, saveModel,
+		arg.Ip,
+		arg.Name,
+		arg.Size,
+		arg.Family,
+		arg.ParameterSize,
+		arg.Digest,
+	)
+	return err
+}
+
+const updateHostActive = `-- name: UpdateHostActive :exec
+UPDATE hosts SET active = 1, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?
+`
+
+func (q *Queries) UpdateHostActive(ctx context.Context, ip string) error {
+	_, err := q.db.ExecContext(ctx, updateHostActive, ip)
+	return err
+}
+
+const updateHostInactive = `-- name: UpdateHostInactive :exec
+UPDATE hosts SET active = 0, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?
+`
+
+func (q *Queries) UpdateHostInactive(ctx context.Context, ip string) error {
+	_, err := q.db.ExecContext(ctx, updateHostInactive, ip)
+	return err
 }
