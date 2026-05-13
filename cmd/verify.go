@@ -55,21 +55,28 @@ func Verify(conf *Config) error {
 	g.SetLimit(conf.Workers)
 
 	for _, host := range hosts {
-		h := host
 
 		g.Go(func() error {
+			h := host
 			model, err := queries.GetRandomModelByIP(ctx, h.Ip)
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				slog.Warn("Nessun modello trovato per l'host", "ip", h.Ip)
+				slog.Error("Errore nel recupero del modello dal DB", "error", err)
 				return nil
 			}
-
 			slog.Info("Modello recuperato", "ip", h.Ip, "model", model.Name)
 
 			hostPort := net.JoinHostPort(h.Ip, fmt.Sprint(h.Port))
 			remoteURL, err := url.Parse(fmt.Sprintf("http://%s", hostPort))
 			if err != nil {
-				return err
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				slog.Error("Errore nella costruzione dell'URL", "error", err, "ip", h.Ip)
+				return nil
 			}
 
 			client := api.NewClient(remoteURL, &http.Client{Timeout: 1 * time.Minute})
@@ -81,7 +88,11 @@ func Verify(conf *Config) error {
 
 			content, err := RenderPrompt(promptTmpl, a, b)
 			if err != nil {
-				return err
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				slog.Error("Errore nella generazione del prompt", "error", err, "ip", h.Ip)
+				return nil
 			}
 
 			// FIX: Corretta la definizione della richiesta
@@ -94,7 +105,7 @@ func Verify(conf *Config) error {
 				Stream: &stream,
 			}
 
-			return client.Chat(ctx, req, func(resp api.ChatResponse) error {
+			err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
 				reply := resp.Message.Content
 				cleanReply := strings.TrimSpace(reply)
 
