@@ -54,6 +54,11 @@ WHERE h.ip = ?
 ORDER BY RANDOM()
 LIMIT 1;
 
+-- name: GetUncensoredModels :many
+SELECT name, size, family, parameter_size, digest, created_at 
+FROM models 
+WHERE name LIKE '%uncensored%';
+
 -- name: SaveInference :exec
 INSERT INTO inferences (
     model_id, 
@@ -62,7 +67,9 @@ INSERT INTO inferences (
     total_duration_ms, 
     prompt_tokens, 
     completion_tokens,
-    verdict
+    verdict,
+    http_status_code,
+    notes
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 );

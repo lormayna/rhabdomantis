@@ -85,6 +85,51 @@ func (q *Queries) GetRandomModelByIP(ctx context.Context, ip string) (GetRandomM
 	return i, err
 }
 
+const getUncensoredModels = `-- name: GetUncensoredModels :many
+SELECT name, size, family, parameter_size, digest, created_at 
+FROM models 
+WHERE name LIKE '%uncensored%'
+`
+
+type GetUncensoredModelsRow struct {
+	Name          string         `json:"name"`
+	Size          sql.NullInt64  `json:"size"`
+	Family        sql.NullString `json:"family"`
+	ParameterSize sql.NullString `json:"parameter_size"`
+	Digest        sql.NullString `json:"digest"`
+	CreatedAt     time.Time      `json:"created_at"`
+}
+
+func (q *Queries) GetUncensoredModels(ctx context.Context) ([]GetUncensoredModelsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUncensoredModels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUncensoredModelsRow
+	for rows.Next() {
+		var i GetUncensoredModelsRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.Size,
+			&i.Family,
+			&i.ParameterSize,
+			&i.Digest,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertHost = `-- name: InsertHost :exec
 INSERT INTO hosts (ip, port, isp, asn, country, city, scanned_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -217,9 +262,11 @@ INSERT INTO inferences (
     total_duration_ms, 
     prompt_tokens, 
     completion_tokens,
-    verdict
+    verdict,
+    http_status_code,
+    notes
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -231,6 +278,8 @@ type SaveInferenceParams struct {
 	PromptTokens     sql.NullInt64  `json:"prompt_tokens"`
 	CompletionTokens sql.NullInt64  `json:"completion_tokens"`
 	Verdict          sql.NullString `json:"verdict"`
+	HttpStatusCode   sql.NullInt64  `json:"http_status_code"`
+	Notes            sql.NullString `json:"notes"`
 }
 
 func (q *Queries) SaveInference(ctx context.Context, arg SaveInferenceParams) error {
@@ -242,6 +291,8 @@ func (q *Queries) SaveInference(ctx context.Context, arg SaveInferenceParams) er
 		arg.PromptTokens,
 		arg.CompletionTokens,
 		arg.Verdict,
+		arg.HttpStatusCode,
+		arg.Notes,
 	)
 	return err
 }

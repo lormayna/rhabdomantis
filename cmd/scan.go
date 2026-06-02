@@ -3,83 +3,91 @@ package cmd
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/lormayna/rhabdomantis/db"
-	"github.com/mattn/go-sqlite3"
+	"github.com/lormayna/rhabdomantis/models"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/ns3777k/go-shodan/v4/shodan"
+	"golang.org/x/sync/errgroup"
 )
 
 func Scan(conf *Config) error {
-	//shodan_api_key := os.Getenv("SHODAN_API_KEY")
-
-	shodan_api_key := conf.ShodanAPIKey
-	if shodan_api_key == "" {
-		return errors.New("Missing Shodan key")
+	dbConn, err := sql.Open("sqlite3", conf.DBFile)
+	if err != nil {
+		return err
 	}
-	queries := db.New(conf.DBConn)
-	client := shodan.NewClient(nil, shodan_api_key)
-	query := "product:Ollama"
-	for i := range 100 {
-		fmt.Printf("Getting %d items", i)
-		hostQueryOptions := shodan.HostQueryOptions{Query: query, Page: i}
-		result, err := client.GetHostsForQuery(context.Background(), &hostQueryOptions)
-		if err != nil {
-			slog.Error("Errore durante la ricerca: %v", err)
-			return err
-		}
-		slog.Info("Pagina %d - Risultati totali trovati: %d\n", i, result.Total)
-		// Iteriamo sui match trovati
-		for _, host := range result.Matches {
-			slog.Info("IP: %s | Porta: %d | Country: %s | City: %s | ASN: %s | ISP: %s\n",
-				host.IP.String(),
-				host.Port,
-				host.Location.Country,
-				host.Location.City,
-				host.ASN,
-				host.ISP,
-			)
+	defer dbConn.Close()
+	queries := db.New(dbConn)
+	ctx := context.Background()
+	hosts, err := queries.GetIPs(ctx)
+	if err != nil {
+		slog.Error("Errore on retrieving data from DB", "error", err)
+		return err
+	}
+	slog.Info("Hosts retrieved successfully", "count", len(hosts))
+	g, ctx := errgroup.WithContext(ctx)
 
-			// Inserisci nel database
-			params := db.InsertHostParams{
-				Ip:   host.IP.String(),
-				Port: int64(host.Port),
-				Isp: sql.NullString{
-					String: host.ISP,
-					Valid:  host.ISP != "",
-				},
-				Asn: sql.NullString{
-					String: host.ASN,
-					Valid:  host.ASN != "",
-				},
-				Country: sql.NullString{
-					String: host.Location.Country,
-					Valid:  host.Location.Country != "",
-				},
-				City: sql.NullString{
-					String: host.Location.City,
-					Valid:  host.Location.City != "",
-				},
-				ScannedAt: sql.NullTime{
-					Time:  time.Now(),
-					Valid: true,
-				},
-			}
+	// Definiamo il limite di concorrenza (es. 3 worker)
+	g.SetLimit(conf.Workers)
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, host := range hosts {
+		h := host
+		g.Go(func() error {
+			ip := h.Ip
+			port := h.Port
+			hostPort := net.JoinHostPort(ip, fmt.Sprint(port))
+			url := fmt.Sprintf("http://%s/api/tags", hostPort)
 
-			err = queries.InsertHost(context.Background(), params)
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 			if err != nil {
-				if errors.Is(err, sqlite3.ErrConstraintUnique) {
-					slog.Info("Host " + host.IP.String() + " already exists in the database, skipping")
-					continue
-				}
-				slog.Error("Errore nell'inserimento dell'host %s: %v", host.IP.String(), err)
 				return err
 			}
-		}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				slog.Error("Errore HTTP", "error", err, "url", url)
+				queries.UpdateHostInactive(ctx, ip)
+				return nil // Don't fail the whole group for one host
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				slog.Warn("Non-200 response", "status", resp.StatusCode, "url", url)
+				queries.UpdateHostInactive(ctx, ip)
+				return nil
+			}
+
+			slog.Info("Host is active", "ip", ip, "port", port)
+			queries.UpdateHostActive(ctx, ip)
+
+			var ollamaResp models.OllamaResponse
+			if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+				slog.Error("Errore parsing JSON", "ip", ip, "error", err)
+				return nil
+			}
+
+			for _, m := range ollamaResp.Models {
+				err = queries.SaveModel(ctx, db.SaveModelParams{
+					Ip:            ip,
+					Name:          m.Name,
+					Size:          sql.NullInt64{Int64: m.Size, Valid: true},
+					Family:        sql.NullString{String: m.Details.Family, Valid: true},
+					ParameterSize: sql.NullString{String: m.Details.ParameterSize, Valid: true},
+					Digest:        sql.NullString{String: m.Digest, Valid: true},
+				})
+
+				if err != nil {
+					slog.Error("Errore salvataggio modello", "ip", ip, "model", m.Name, "error", err)
+				}
+			}
+
+			return nil
+		})
 	}
-	return nil
+	return g.Wait()
 }

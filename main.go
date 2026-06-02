@@ -6,32 +6,51 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 	"github.com/lormayna/rhabdomantis/cmd"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/urfave/cli/v2"
 )
 
-const workers = 3
+const workers = 10
+
+func readConfig() (*cmd.Config, error) {
+	// Carica variabili d'ambiente da .env se presente
+	if err := godotenv.Load(); err != nil {
+		return nil, fmt.Errorf("error loading .env file: %w", err)
+	}
+
+	var conf cmd.Config
+	if err := env.Parse(&conf); err != nil {
+		return nil, fmt.Errorf("error parsing environment variables: %w", err)
+	}
+	return &conf, nil
+}
 
 func main() {
-	shodan_api_key := "p5u2hw6AHFlXJLewlxwyZ8q9yygfwUMH"
-	if shodan_api_key == "" {
+	slog.Info("Starting Rhabdomantis...")
+	conf, err := readConfig()
+	if err != nil {
+		slog.Error("Errore nella lettura della configurazione", "error", err)
+		os.Exit(1)
+	}
+	if conf.ShodanAPIKey == "" {
 		fmt.Println("Error: SHODAN_API_KEY environment variable is not set.")
 		os.Exit(1)
 	}
 
 	// Apri connessione al database SQLite
-	dbConn, err := sql.Open("sqlite3", "hosts.db")
+	dbConn, err := sql.Open("sqlite3", conf.DBFile)
 	if err != nil {
 		slog.Error("Errore nell'apertura del database", "error", err)
 		os.Exit(1)
 	}
 	defer dbConn.Close()
 
-	conf := &cmd.Config{
-		ShodanAPIKey: shodan_api_key,
-		DBConn:       dbConn,
-		Workers:      workers,
+	if err != nil {
+		slog.Error("Errore nella lettura della configurazione", "error", err)
+		os.Exit(1)
 	}
 
 	// Crea la tabella se non esiste
@@ -74,7 +93,7 @@ func main() {
 					path := c.String("path")
 					fmt.Printf("🔍 Start scan in: %s...\n", path)
 
-					err := cmd.Check(conf)
+					err := cmd.Scan(conf)
 					if err != nil {
 						slog.Error("Errore durante la scansione", "error", err)
 						return err
@@ -94,11 +113,13 @@ func main() {
 					},
 				},
 				Action: func(c *cli.Context) error {
-					if c.Bool("force") {
-						fmt.Println("♻️  Sincronizzazione forzata in corso...")
-					} else {
-						fmt.Println("♻️  Sincronizzazione standard in corso...")
+					fmt.Println("♻️  Sincronizzazione standard in corso...")
+					err := cmd.Sync(conf)
+					if err != nil {
+						slog.Error("Errore durante la sincronizzazione", "error", err)
+						return err
 					}
+					fmt.Println("✅ Sincronizzazione completata con successo!")
 					return nil
 				},
 			},
@@ -118,6 +139,30 @@ func main() {
 					return nil
 				}, // Chiusura corretta della funzione Action
 			}, // Chiusura corretta del comando scan
+			{
+				Name:    "export",
+				Aliases: []string{"e"},
+				Usage:   "Export uncensored models to JSON",
+				Flags: []cli.Flag{
+					&cli.IntFlag{
+						Name:    "num",
+						Aliases: []string{"n"},
+						Value:   3,
+						Usage:   "Number of models to export",
+					},
+				},
+				Action: func(c *cli.Context) error {
+					num := c.Int("num")
+					fmt.Printf("📂 Exporting %d uncensored models...\n", num)
+					err := cmd.Export(conf, num)
+					if err != nil {
+						slog.Error("Errore durante l'esportazione", "error", err)
+						return err
+					}
+					fmt.Println("✅ Export completed successfully!")
+					return nil
+				},
+			},
 		},
 	}
 

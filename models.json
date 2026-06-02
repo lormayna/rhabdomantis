@@ -1,0 +1,53 @@
+[
+  {
+    "name": "llama2-uncensored:7b",
+    "model": "llama2-uncensored:7b",
+    "modified_at": "2026-05-11T19:43:04Z",
+    "size": 3825819449,
+    "digest": "44040b9222331f7eacd27ec9254e42de585af28d2c5d1211cdaeb3ffa361fe3f",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "llama",
+      "families": [
+        "llama"
+      ],
+      "parameter_size": "7B",
+      "quantization_level": "Q4_K_M"
+    }
+  },
+  {
+    "name": "hf.co/DavidAU/Qwen3.6-27B-Heretic-Uncensored-FINETUNE-NEO-CODE-Di-IMatrix-MAX-GGUF:IQ4_XS",
+    "model": "hf.co/DavidAU/Qwen3.6-27B-Heretic-Uncensored-FINETUNE-NEO-CODE-Di-IMatrix-MAX-GGUF:IQ4_XS",
+    "modified_at": "2026-05-11T19:45:47Z",
+    "size": 16324850081,
+    "digest": "c522defd3031dbdb269d21d8a9eca09942502c98e25f256a59f7a57d238ee30b",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen35",
+      "families": [
+        "qwen35"
+      ],
+      "parameter_size": "26.9B",
+      "quantization_level": "Q4_K_M"
+    }
+  },
+  {
+    "name": "qwen35-uncensored:latest",
+    "model": "qwen35-uncensored:latest",
+    "modified_at": "2026-05-11T19:45:47Z",
+    "size": 9527501699,
+    "digest": "3536402eacf9a750275ae1f212c8cf8f27606bd72eca828720c989b672a3f679",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen35",
+      "families": [
+        "qwen35"
+      ],
+      "parameter_size": "9.0B",
+      "quantization_level": "Q4_K_M"
+    }
+  }
+]

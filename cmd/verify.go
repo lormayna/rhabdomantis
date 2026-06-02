@@ -42,8 +42,12 @@ func RenderPrompt(t *template.Template, a, b int) (string, error) {
 
 func Verify(conf *Config) error {
 	promptTmpl := template.Must(template.ParseFS(fs, sumTemplate))
-	queries := db.New(conf.DBConn)
-
+	dbConn, err := sql.Open("sqlite3", conf.DBFile)
+	if err != nil {
+		return err
+	}
+	defer dbConn.Close()
+	queries := db.New(dbConn)
 	hosts, err := queries.GetIPs(context.Background())
 	if err != nil {
 		slog.Error("Errore nel recupero dati dal DB", "error", err)
@@ -113,7 +117,7 @@ func Verify(conf *Config) error {
 				sumValue, err := strconv.Atoi(cleanReply)
 				if err != nil {
 					slog.Warn("Risposta non numerica", "reply", cleanReply, "ip", h.Ip)
-					verdict = "suspicious"
+					verdict = "pending"
 				} else if sumValue == expectedSum {
 					verdict = "success"
 				} else {
@@ -129,6 +133,8 @@ func Verify(conf *Config) error {
 					PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(resp.PromptEvalCount)},
 					CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(resp.EvalCount)},
 					Verdict:          sql.NullString{Valid: true, String: verdict},
+					HttpStatusCode:   sql.NullInt64{Valid: true, Int64: int64(200)},
+					Notes:            sql.NullString{Valid: true, String: ""},
 				}
 
 				err = queries.SaveInference(ctx, params)
@@ -139,6 +145,35 @@ func Verify(conf *Config) error {
 
 				return nil
 			})
+			if err != nil {
+				var notes string
+				var statusCode int64
+
+				if apiErr, ok := err.(*api.StatusError); ok {
+					notes = apiErr.Error()
+					statusCode = int64(apiErr.StatusCode)
+				}
+
+				params := db.SaveInferenceParams{
+					ModelID:          model.ID,
+					Prompt:           content,
+					Response:         sql.NullString{Valid: true, String: notes},
+					TotalDurationMs:  sql.NullInt64{Valid: false, Int64: 0},
+					PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(0)},
+					CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(0)},
+					Verdict:          sql.NullString{Valid: true, String: "failed"},
+					HttpStatusCode:   sql.NullInt64{Valid: true, Int64: statusCode},
+					Notes:            sql.NullString{Valid: true, String: notes},
+				}
+
+				err = queries.SaveInference(ctx, params)
+
+				if err != nil {
+					slog.Error("Errore salvataggio DB", "error", err)
+				}
+				return nil
+			}
+			return nil
 		})
 	}
 

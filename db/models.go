@@ -32,6 +32,8 @@ type Inference struct {
 	CompletionTokens sql.NullInt64  `json:"completion_tokens"`
 	Verdict          sql.NullString `json:"verdict"`
 	CreatedAt        time.Time      `json:"created_at"`
+	HttpStatusCode   sql.NullInt64  `json:"http_status_code"`
+	Notes            sql.NullString `json:"notes"`
 }
 
 type Model struct {

@@ -3,6 +3,8 @@ module github.com/lormayna/rhabdomantis
 go 1.26.1
 
 require (
+	github.com/caarlos0/env/v11 v11.4.1
+	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/ns3777k/go-shodan/v4 v4.2.0
 	github.com/ollama/ollama v0.23.3
