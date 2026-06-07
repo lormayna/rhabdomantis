@@ -20,10 +20,13 @@ ORDER BY created_at DESC;
 SELECT ip, port FROM hosts where active = 1;
 
 -- name: UpdateHostInactive :exec
-UPDATE hosts SET active = 0, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?;
+UPDATE hosts SET scanned_at=CURRENT_TIMESTAMP, scan_count = scan_count + 1, failed_scan_count = failed_scan_count + 1 WHERE ip = ?;
 
 -- name: UpdateHostActive :exec
-UPDATE hosts SET active = 1, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?;
+UPDATE hosts SET active = 1, scanned_at=CURRENT_TIMESTAMP, scan_count = scan_count + 1, failed_scan_count = 0 WHERE ip = ?;
+
+-- name: UpdateHostSSL :exec
+UPDATE hosts SET ssl_enabled = ? WHERE ip = ?;
 
 -- name: DeleteModelsByHost :exec
 DELETE FROM models 

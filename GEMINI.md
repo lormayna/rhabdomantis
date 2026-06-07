@@ -63,7 +63,7 @@ go build -o rhabdomantis main.go
 
 ## Development Conventions
 
-- **Database Management:** Do not edit `db/db.go` or `db/models.go` manually. Update `db/schema.sql` or `db/queries.sql` and run `sqlc generate`.
+- **Database Management:** Do not edit `db/db.go` or `db/models.go` manually. Update the migrations in `db/migrations/` or `db/queries.sql` and run `sqlc generate`. Use `goose` for schema changes.
 - **Concurrency:** The application uses a worker pool pattern via `errgroup`. The default number of workers is 3 (defined in `main.go`).
 - **Error Handling:** Use `log/slog` for structured logging.
 - **API Keys:** Avoid hardcoding secrets. Ensure `SHODAN_API_KEY` is handled securely.

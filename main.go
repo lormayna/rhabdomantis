@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"embed"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,8 +11,12 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/lormayna/rhabdomantis/cmd"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pressly/goose/v3"
 	"github.com/urfave/cli/v2"
 )
+
+//go:embed db/migrations/*.sql
+var embedMigrations embed.FS
 
 const workers = 10
 
@@ -48,28 +53,16 @@ func main() {
 	}
 	defer dbConn.Close()
 
-	if err != nil {
-		slog.Error("Errore nella lettura della configurazione", "error", err)
+	// Esegui migrazioni con goose
+	goose.SetBaseFS(embedMigrations)
+
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		slog.Error("Errore nell'impostazione del dialetto goose", "error", err)
 		os.Exit(1)
 	}
 
-	// Crea la tabella se non esiste
-	schema := `
-    CREATE TABLE IF NOT EXISTS hosts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ip TEXT NOT NULL UNIQUE,
-        port INTEGER NOT NULL,
-        isp TEXT,
-        asn TEXT,
-        country TEXT,
-        city TEXT,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        scanned_at DATETIME
-    );`
-	_, err = dbConn.Exec(schema)
-	if err != nil {
-		slog.Error("Errore nella creazione della tabella", "error", err)
+	if err := goose.Up(dbConn, "db/migrations"); err != nil {
+		slog.Error("Errore durante l'esecuzione delle migrazioni", "error", err)
 		os.Exit(1)
 	}
 

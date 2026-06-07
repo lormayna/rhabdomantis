@@ -10,16 +10,19 @@ import (
 )
 
 type Host struct {
-	ID        int64          `json:"id"`
-	Ip        string         `json:"ip"`
-	Port      int64          `json:"port"`
-	Isp       sql.NullString `json:"isp"`
-	Asn       sql.NullString `json:"asn"`
-	Country   sql.NullString `json:"country"`
-	City      sql.NullString `json:"city"`
-	CreatedAt time.Time      `json:"created_at"`
-	Active    bool           `json:"active"`
-	ScannedAt sql.NullTime   `json:"scanned_at"`
+	ID              int64          `json:"id"`
+	Ip              string         `json:"ip"`
+	Port            int64          `json:"port"`
+	Isp             sql.NullString `json:"isp"`
+	Asn             sql.NullString `json:"asn"`
+	Country         sql.NullString `json:"country"`
+	City            sql.NullString `json:"city"`
+	CreatedAt       time.Time      `json:"created_at"`
+	Active          bool           `json:"active"`
+	ScannedAt       sql.NullTime   `json:"scanned_at"`
+	ScanCount       int64          `json:"scan_count"`
+	FailedScanCount int64          `json:"failed_scan_count"`
+	SslEnabled      bool           `json:"ssl_enabled"`
 }
 
 type Inference struct {

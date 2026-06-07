@@ -175,7 +175,7 @@ func (q *Queries) InsertModel(ctx context.Context, arg InsertModelParams) error 
 
 const listHosts = `-- name: ListHosts :many
 
-SELECT id, ip, port, isp, asn, country, city, created_at, active, scanned_at FROM hosts
+SELECT id, ip, port, isp, asn, country, city, created_at, active, scanned_at, scan_count, failed_scan_count, ssl_enabled FROM hosts
 `
 
 // db/queries.sql
@@ -199,6 +199,9 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.CreatedAt,
 			&i.Active,
 			&i.ScannedAt,
+			&i.ScanCount,
+			&i.FailedScanCount,
+			&i.SslEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +336,7 @@ func (q *Queries) SaveModel(ctx context.Context, arg SaveModelParams) error {
 }
 
 const updateHostActive = `-- name: UpdateHostActive :exec
-UPDATE hosts SET active = 1, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?
+UPDATE hosts SET active = 1, scanned_at=CURRENT_TIMESTAMP, scan_count = scan_count + 1, failed_scan_count = 0 WHERE ip = ?
 `
 
 func (q *Queries) UpdateHostActive(ctx context.Context, ip string) error {
@@ -342,10 +345,24 @@ func (q *Queries) UpdateHostActive(ctx context.Context, ip string) error {
 }
 
 const updateHostInactive = `-- name: UpdateHostInactive :exec
-UPDATE hosts SET active = 0, scanned_at=CURRENT_TIMESTAMP WHERE ip = ?
+UPDATE hosts SET scanned_at=CURRENT_TIMESTAMP, scan_count = scan_count + 1, failed_scan_count = failed_scan_count + 1 WHERE ip = ?
 `
 
 func (q *Queries) UpdateHostInactive(ctx context.Context, ip string) error {
 	_, err := q.db.ExecContext(ctx, updateHostInactive, ip)
+	return err
+}
+
+const updateHostSSL = `-- name: UpdateHostSSL :exec
+UPDATE hosts SET ssl_enabled = ? WHERE ip = ?
+`
+
+type UpdateHostSSLParams struct {
+	SslEnabled bool   `json:"ssl_enabled"`
+	Ip         string `json:"ip"`
+}
+
+func (q *Queries) UpdateHostSSL(ctx context.Context, arg UpdateHostSSLParams) error {
+	_, err := q.db.ExecContext(ctx, updateHostSSL, arg.SslEnabled, arg.Ip)
 	return err
 }

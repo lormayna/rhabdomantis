@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -74,7 +75,33 @@ func Verify(conf *Config) error {
 			slog.Info("Modello recuperato", "ip", h.Ip, "model", model.Name)
 
 			hostPort := net.JoinHostPort(h.Ip, fmt.Sprint(h.Port))
-			remoteURL, err := url.Parse(fmt.Sprintf("http://%s", hostPort))
+
+			// SSL Detection
+			sslEnabled := false
+			finalURLStr := fmt.Sprintf("http://%s", hostPort)
+
+			tr := &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
+			httpClient := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+
+			resp, err := httpClient.Get(fmt.Sprintf("https://%s/api/tags", hostPort))
+			if err == nil {
+				resp.Body.Close()
+				sslEnabled = true
+				finalURLStr = fmt.Sprintf("https://%s", hostPort)
+				slog.Info("SSL rilevato", "ip", h.Ip)
+			}
+
+			err = queries.UpdateHostSSL(ctx, db.UpdateHostSSLParams{
+				SslEnabled: sslEnabled,
+				Ip:         h.Ip,
+			})
+			if err != nil {
+				slog.Error("Errore aggiornamento SSL nel DB", "error", err, "ip", h.Ip)
+			}
+
+			remoteURL, err := url.Parse(finalURLStr)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -83,7 +110,7 @@ func Verify(conf *Config) error {
 				return nil
 			}
 
-			client := api.NewClient(remoteURL, &http.Client{Timeout: 1 * time.Minute})
+			client := api.NewClient(remoteURL, httpClient)
 
 			nA, _ := rand.Int(rand.Reader, big.NewInt(100))
 			nB, _ := rand.Int(rand.Reader, big.NewInt(100))
