@@ -1,0 +1,10 @@
+version: "1"
+packages:
+  - name: db
+    path: db
+    engine: sqlite
+    schema: db/migrations
+    queries: db/queries.sql
+    emit_json_tags: true
+    emit_prepared_queries: false
+    emit_interface: false
