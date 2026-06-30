@@ -120,10 +120,22 @@ func main() {
 				Name:    "verify",
 				Aliases: []string{"v"},
 				Usage:   "Verify the presence of LLMs on active hosts",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "prompt",
+						Aliases: []string{"p"},
+						Usage:   "Custom prompt to send to all models",
+					},
+				},
 				Action: func(c *cli.Context) error {
-					fmt.Printf("🔍 Start verification")
+					prompt := c.String("prompt")
+					if prompt != "" {
+						fmt.Printf("🔍 Start verification with custom prompt: %q\n", prompt)
+					} else {
+						fmt.Printf("🔍 Start verification\n")
+					}
 
-					err := cmd.Verify(conf)
+					err := cmd.Verify(conf, prompt)
 					if err != nil {
 						slog.Error("Errore durante la verifica", "error", err)
 						return err

@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+type CustomInference struct {
+	ID        int64          `json:"id"`
+	Ip        string         `json:"ip"`
+	ModelID   int64          `json:"model_id"`
+	Prompt    string         `json:"prompt"`
+	Reply     sql.NullString `json:"reply"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
 type Host struct {
 	ID              int64          `json:"id"`
 	Ip              string         `json:"ip"`

@@ -76,3 +76,21 @@ INSERT INTO inferences (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?
 );
+
+-- name: SaveCustomInference :exec
+INSERT INTO custom_inferences (
+    ip,
+    model_id,
+    prompt,
+    reply
+) VALUES (
+    ?, ?, ?, ?
+);
+
+-- name: GetModelsByHostIP :many
+SELECT 
+    m.id, 
+    m.name
+FROM models m
+JOIN hosts h ON m.host_id = h.id
+WHERE h.ip = ?;

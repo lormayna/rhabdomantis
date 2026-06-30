@@ -53,6 +53,43 @@ func (q *Queries) GetIPs(ctx context.Context) ([]GetIPsRow, error) {
 	return items, nil
 }
 
+const getModelsByHostIP = `-- name: GetModelsByHostIP :many
+SELECT 
+    m.id, 
+    m.name
+FROM models m
+JOIN hosts h ON m.host_id = h.id
+WHERE h.ip = ?
+`
+
+type GetModelsByHostIPRow struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) GetModelsByHostIP(ctx context.Context, ip string) ([]GetModelsByHostIPRow, error) {
+	rows, err := q.db.QueryContext(ctx, getModelsByHostIP, ip)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetModelsByHostIPRow
+	for rows.Next() {
+		var i GetModelsByHostIPRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRandomModelByIP = `-- name: GetRandomModelByIP :one
 SELECT 
     m.id, 
@@ -255,6 +292,34 @@ func (q *Queries) ListModelsByHost(ctx context.Context, hostID int64) ([]ListMod
 		return nil, err
 	}
 	return items, nil
+}
+
+const saveCustomInference = `-- name: SaveCustomInference :exec
+INSERT INTO custom_inferences (
+    ip,
+    model_id,
+    prompt,
+    reply
+) VALUES (
+    ?, ?, ?, ?
+)
+`
+
+type SaveCustomInferenceParams struct {
+	Ip      string         `json:"ip"`
+	ModelID int64          `json:"model_id"`
+	Prompt  string         `json:"prompt"`
+	Reply   sql.NullString `json:"reply"`
+}
+
+func (q *Queries) SaveCustomInference(ctx context.Context, arg SaveCustomInferenceParams) error {
+	_, err := q.db.ExecContext(ctx, saveCustomInference,
+		arg.Ip,
+		arg.ModelID,
+		arg.Prompt,
+		arg.Reply,
+	)
+	return err
 }
 
 const saveInference = `-- name: SaveInference :exec

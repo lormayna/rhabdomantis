@@ -41,7 +41,52 @@ func RenderPrompt(t *template.Template, a, b int) (string, error) {
 	return buf.String(), err
 }
 
-func Verify(conf *Config) error {
+type ModelTarget struct {
+	ID   int64
+	Name string
+}
+
+func selectMostLikelyUncensored(models []ModelTarget) ModelTarget {
+	if len(models) == 0 {
+		return ModelTarget{}
+	}
+
+	bestModel := models[0]
+	bestScore := -1
+
+	for _, m := range models {
+		score := 0
+		nameLower := strings.ToLower(m.Name)
+
+		if strings.Contains(nameLower, "uncensored") {
+			score += 100
+		}
+		if strings.Contains(nameLower, "dolphin") {
+			score += 50
+		}
+		if strings.Contains(nameLower, "hermes") {
+			score += 40
+		}
+		if strings.Contains(nameLower, "wizard") {
+			score += 30
+		}
+		if strings.Contains(nameLower, "vicuna") {
+			score += 30
+		}
+		if strings.Contains(nameLower, "nous") {
+			score += 20
+		}
+
+		if score > bestScore {
+			bestScore = score
+			bestModel = m
+		}
+	}
+
+	return bestModel
+}
+
+func Verify(conf *Config, customPrompt string) error {
 	promptTmpl := template.Must(template.ParseFS(fs, sumTemplate))
 	dbConn, err := sql.Open("sqlite3", conf.DBFile)
 	if err != nil {
@@ -63,16 +108,39 @@ func Verify(conf *Config) error {
 
 		g.Go(func() error {
 			h := host
-			model, err := queries.GetRandomModelByIP(ctx, h.Ip)
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
+			var targets []ModelTarget
+
+			if customPrompt != "" {
+				modelsList, err := queries.GetModelsByHostIP(ctx, h.Ip)
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Error("Errore nel recupero dei modelli per l'host dal DB", "error", err, "ip", h.Ip)
+					return nil
 				}
-				slog.Warn("Nessun modello trovato per l'host", "ip", h.Ip)
-				slog.Error("Errore nel recupero del modello dal DB", "error", err)
-				return nil
+				if len(modelsList) == 0 {
+					slog.Warn("Nessun modello trovato per l'host", "ip", h.Ip)
+					return nil
+				}
+				var hostTargets []ModelTarget
+				for _, m := range modelsList {
+					hostTargets = append(hostTargets, ModelTarget{ID: m.ID, Name: m.Name})
+				}
+				selected := selectMostLikelyUncensored(hostTargets)
+				targets = append(targets, selected)
+			} else {
+				model, err := queries.GetRandomModelByIP(ctx, h.Ip)
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Warn("Nessun modello trovato per l'host", "ip", h.Ip)
+					slog.Error("Errore nel recupero del modello dal DB", "error", err)
+					return nil
+				}
+				targets = append(targets, ModelTarget{ID: model.ID, Name: model.Name})
 			}
-			slog.Info("Modello recuperato", "ip", h.Ip, "model", model.Name)
 
 			hostPort := net.JoinHostPort(h.Ip, fmt.Sprint(h.Port))
 
@@ -112,93 +180,132 @@ func Verify(conf *Config) error {
 
 			client := api.NewClient(remoteURL, httpClient)
 
-			nA, _ := rand.Int(rand.Reader, big.NewInt(100))
-			nB, _ := rand.Int(rand.Reader, big.NewInt(100))
-			a, b := int(nA.Int64()), int(nB.Int64())
-			expectedSum := a + b
-
-			content, err := RenderPrompt(promptTmpl, a, b)
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				slog.Error("Errore nella generazione del prompt", "error", err, "ip", h.Ip)
-				return nil
-			}
-
-			// FIX: Corretta la definizione della richiesta
-			stream := false
-			req := &api.ChatRequest{
-				Model: model.Name,
-				Messages: []api.Message{
-					{Role: "user", Content: content},
-				},
-				Stream: &stream,
-			}
-
-			err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
-				reply := resp.Message.Content
-				cleanReply := strings.TrimSpace(reply)
-
-				var verdict string
-				sumValue, err := strconv.Atoi(cleanReply)
-				if err != nil {
-					slog.Warn("Risposta non numerica", "reply", cleanReply, "ip", h.Ip)
-					verdict = "pending"
-				} else if sumValue == expectedSum {
-					verdict = "success"
+			for _, target := range targets {
+				if customPrompt != "" {
+					stream := false
+					req := &api.ChatRequest{
+						Model: target.Name,
+						Messages: []api.Message{
+							{Role: "user", Content: customPrompt},
+						},
+						Stream: &stream,
+					}
+					slog.Info("Invio prompt personalizzato", "ip", h.Ip, "model", target.Name, "prompt", customPrompt)
+					err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
+						reply := resp.Message.Content
+						params := db.SaveCustomInferenceParams{
+							Ip:      h.Ip,
+							ModelID: target.ID,
+							Prompt:  customPrompt,
+							Reply:   sql.NullString{Valid: true, String: reply},
+						}
+						err = queries.SaveCustomInference(ctx, params)
+						if err != nil {
+							slog.Error("Errore salvataggio prompt personalizzato nel DB", "error", err)
+						}
+						return nil
+					})
+					if err != nil {
+						var notes string
+						if apiErr, ok := err.(*api.StatusError); ok {
+							notes = apiErr.Error()
+						} else {
+							notes = err.Error()
+						}
+						slog.Error("Errore chat prompt personalizzato", "error", err, "ip", h.Ip, "model", target.Name)
+						params := db.SaveCustomInferenceParams{
+							Ip:      h.Ip,
+							ModelID: target.ID,
+							Prompt:  customPrompt,
+							Reply:   sql.NullString{Valid: true, String: "Error: " + notes},
+						}
+						_ = queries.SaveCustomInference(ctx, params)
+					}
 				} else {
-					verdict = "failed"
+					nA, _ := rand.Int(rand.Reader, big.NewInt(100))
+					nB, _ := rand.Int(rand.Reader, big.NewInt(100))
+					a, b := int(nA.Int64()), int(nB.Int64())
+					expectedSum := a + b
+
+					content, err := RenderPrompt(promptTmpl, a, b)
+					if err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						slog.Error("Errore nella generazione del prompt", "error", err, "ip", h.Ip)
+						continue
+					}
+
+					stream := false
+					req := &api.ChatRequest{
+						Model: target.Name,
+						Messages: []api.Message{
+							{Role: "user", Content: content},
+						},
+						Stream: &stream,
+					}
+
+					err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
+						reply := resp.Message.Content
+						cleanReply := strings.TrimSpace(reply)
+
+						var verdict string
+						sumValue, err := strconv.Atoi(cleanReply)
+						if err != nil {
+							slog.Warn("Risposta non numerica", "reply", cleanReply, "ip", h.Ip)
+							verdict = "pending"
+						} else if sumValue == expectedSum {
+							verdict = "success"
+						} else {
+							verdict = "failed"
+						}
+
+						params := db.SaveInferenceParams{
+							ModelID:          target.ID,
+							Prompt:           content,
+							Response:         sql.NullString{Valid: true, String: reply},
+							TotalDurationMs:  sql.NullInt64{Valid: true, Int64: resp.TotalDuration.Milliseconds()},
+							PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(resp.PromptEvalCount)},
+							CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(resp.EvalCount)},
+							Verdict:          sql.NullString{Valid: true, String: verdict},
+							HttpStatusCode:   sql.NullInt64{Valid: true, Int64: int64(200)},
+							Notes:            sql.NullString{Valid: true, String: ""},
+						}
+
+						err = queries.SaveInference(ctx, params)
+						if err != nil {
+							slog.Error("Errore salvataggio DB", "error", err)
+						}
+
+						return nil
+					})
+					if err != nil {
+						var notes string
+						var statusCode int64
+
+						if apiErr, ok := err.(*api.StatusError); ok {
+							notes = apiErr.Error()
+							statusCode = int64(apiErr.StatusCode)
+						}
+
+						params := db.SaveInferenceParams{
+							ModelID:          target.ID,
+							Prompt:           content,
+							Response:         sql.NullString{Valid: true, String: notes},
+							TotalDurationMs:  sql.NullInt64{Valid: false, Int64: 0},
+							PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(0)},
+							CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(0)},
+							Verdict:          sql.NullString{Valid: true, String: "failed"},
+							HttpStatusCode:   sql.NullInt64{Valid: true, Int64: statusCode},
+							Notes:            sql.NullString{Valid: true, String: notes},
+						}
+
+						err = queries.SaveInference(ctx, params)
+						if err != nil {
+							slog.Error("Errore salvataggio DB", "error", err)
+						}
+					}
 				}
-
-				// FIX: Corretti virgole e nomi campi struct
-				params := db.SaveInferenceParams{
-					ModelID:          model.ID, // Assicurati che sia Name se viene da sqlc
-					Prompt:           content,
-					Response:         sql.NullString{Valid: true, String: reply},
-					TotalDurationMs:  sql.NullInt64{Valid: true, Int64: resp.TotalDuration.Milliseconds()},
-					PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(resp.PromptEvalCount)},
-					CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(resp.EvalCount)},
-					Verdict:          sql.NullString{Valid: true, String: verdict},
-					HttpStatusCode:   sql.NullInt64{Valid: true, Int64: int64(200)},
-					Notes:            sql.NullString{Valid: true, String: ""},
-				}
-
-				err = queries.SaveInference(ctx, params)
-
-				if err != nil {
-					slog.Error("Errore salvataggio DB", "error", err)
-				}
-
-				return nil
-			})
-			if err != nil {
-				var notes string
-				var statusCode int64
-
-				if apiErr, ok := err.(*api.StatusError); ok {
-					notes = apiErr.Error()
-					statusCode = int64(apiErr.StatusCode)
-				}
-
-				params := db.SaveInferenceParams{
-					ModelID:          model.ID,
-					Prompt:           content,
-					Response:         sql.NullString{Valid: true, String: notes},
-					TotalDurationMs:  sql.NullInt64{Valid: false, Int64: 0},
-					PromptTokens:     sql.NullInt64{Valid: true, Int64: int64(0)},
-					CompletionTokens: sql.NullInt64{Valid: true, Int64: int64(0)},
-					Verdict:          sql.NullString{Valid: true, String: "failed"},
-					HttpStatusCode:   sql.NullInt64{Valid: true, Int64: statusCode},
-					Notes:            sql.NullString{Valid: true, String: notes},
-				}
-
-				err = queries.SaveInference(ctx, params)
-
-				if err != nil {
-					slog.Error("Errore salvataggio DB", "error", err)
-				}
-				return nil
 			}
 			return nil
 		})
